@@ -27,22 +27,32 @@
 #define LCD_WIDTH 128
 #define LCD_LENGTH 160
 
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
+
 // SD
 #define MISO 12
 #define SD_CS 6
 
-Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
-
 // melody
 int melody[] = {
-  262, 262, 0, 262, // C C pauza C
-  0, 208, 262, 0,   // pauza G C pauza
-  330, 0, 392, 0,   // E pauza G pauza
-  262, 0, 349, 0,   // C pauza F pauza
-  330, 0, 294, 0    // E pauza D pauza
+  262, 262, 0, 262,
+  0, 208, 262, 0,
+  330, 0, 392, 0,
+  262, 0, 349, 0,
+  330, 0, 294, 0
 };
 
-unsigned int noteDuration = 150; // durata per nota (mai rapidă decât înainte)
+int game_over_melody[] = {
+  392, 0, 370, 0,
+  349, 0, 330, 0,
+  294, 0, 262, 0,
+  196, 0, 0, 0
+};
+
+int *current_melody = melody;
+unsigned int current_melody_length = sizeof(melody) / sizeof(int);
+
+unsigned int noteDuration = 150;
 unsigned long previousMillisMusic = 0;
 unsigned int noteIndex = 0;
 unsigned int pitch = 1;
@@ -50,13 +60,14 @@ unsigned int speed = 1;
 
 // color picker
 unsigned long previousMillisColor = 0;
-// unsigned int pinChoices[] = {redLedPin, greenLedPin, blueLedPin};
-// unsigned int colorChoice[] = {0, 1, 2, 3}; // 0 - red, 1 - green, 2 - blue, 3 - yellow
 unsigned int choice_idx = 0;
 unsigned int num_choices = 0;
 int all_choices[100];
 
+int circle_radius = 30;
+
 int player_choice;
+int score;
 
 
 // states
@@ -64,8 +75,12 @@ int player_choice;
 #define PICKING 1
 #define GUESSING 2
 #define GAME_OVER 3
+#define RESTARTING 4
 unsigned int current_state = NOT_STARTED;
 
+int blink = 0;
+
+// intrerupts
 volatile unsigned long lastInterruptTime = 0;
 const unsigned long debounceDelay = 200;
 
@@ -81,6 +96,13 @@ ISR(PCINT1_vect) {
   || digitalRead(buttonGreenPin) || digitalRead(buttonYellowPin) == HIGH)) {
     current_state = PICKING;
     choice_idx = 0;
+    tft.fillScreen(ST77XX_BLACK);
+  }
+
+  // restart game
+  if (current_state == GAME_OVER && (digitalRead(buttonRedPin) || digitalRead(buttonBluePin) 
+  || digitalRead(buttonGreenPin) || digitalRead(buttonYellowPin) == HIGH)) {
+    current_state = RESTARTING;
   }
 
   // make a choice
@@ -98,6 +120,7 @@ ISR(PCINT1_vect) {
 void setup()
 {
   Serial.begin(9600);
+  randomSeed(analogRead(A0));
 
   // init buttons
   pinMode(buttonRedPin, INPUT_PULLUP);
@@ -111,6 +134,8 @@ void setup()
   // init buzzer
   pinMode(buzzerPin, OUTPUT);
 
+  SPI.begin();
+
   // set the cs pins
   pinMode(TFT_CS, OUTPUT);
   pinMode(SD_CS, OUTPUT);
@@ -118,27 +143,23 @@ void setup()
   // turn off the communication
   digitalWrite(TFT_CS, HIGH);
   digitalWrite(SD_CS, HIGH);
-
-  SPI.begin();
-
+  
   // init lcd
-  digitalWrite(TFT_CS, LOW);  // activăm LCD
-  tft.initR(INITR_18BLACKTAB);  // Folosește INITR_BLACKTAB pentru ecran 128x160
-  tft.fillScreen(ST77XX_BLACK);  // Umple ecranul cu culoarea neagră
-  tft.setTextColor(ST77XX_WHITE);  // Culoare text alb
-  tft.setTextSize(1);  // Dimensiunea textului
-  tft.setCursor(10, 10);  // Poziționează cursorul
-  tft.print("Hello, World!\n Si cu tini uai?");  // Afișează textul
+  digitalWrite(TFT_CS, LOW);
+  tft.initR(INITR_18BLACKTAB);
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setTextSize(1);
   digitalWrite(TFT_CS, HIGH);
 
   // init SD card
-  // digitalWrite(SD_CS, LOW);
-  // if (!SD.begin(SD_CS)) {
-  //   Serial.println("Error!");
-  //   return;
-  // }
-  // Serial.println("SD initialized");
-  // digitalWrite(SD_CS, HIGH);
+  digitalWrite(SD_CS, LOW);
+  if (!SD.begin(-1)) {
+    Serial.println("Error!");
+    return;
+  }
+  Serial.println("SD initialized");
+  digitalWrite(SD_CS, HIGH);
 
 }
 
@@ -148,15 +169,27 @@ void loop()
 
   PlayMusic(currentMillis);
 
-  switch (current_state)
-  {
+  switch (current_state) {
   case NOT_STARTED:
-    /* code */
+    if (currentMillis - previousMillisColor >= 500) {
+      previousMillisColor = currentMillis;
+
+      if (blink == 0) {
+        tft.setTextColor(ST77XX_BLACK);
+        tft.setCursor(15, 30);
+        tft.print("Press any button\n\n      to start!");
+        tft.setTextColor(ST77XX_WHITE);
+        blink = 1;
+      } else {
+        tft.setCursor(15, 30);
+        tft.print("Press any button\n\n      to start!");
+        blink = 0;
+      }
+    }
     break;
   case PICKING:
-    if (currentMillis - previousMillisColor >= 500)
-    {
-      tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, 20, ST77XX_BLACK);
+    if (currentMillis - previousMillisColor >= 500) {
+      tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, circle_radius, ST77XX_BLACK);
     }
     if (choice_idx < num_choices) {
       ShowColors(currentMillis);
@@ -165,21 +198,46 @@ void loop()
     }
     break;
   case GUESSING:
-    if (currentMillis - previousMillisColor >= 500)
-    {
-      tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, 20, ST77XX_BLACK);
+    if (currentMillis - previousMillisColor >= 500) {
+      tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, circle_radius, ST77XX_BLACK);
     }
+
     if (choice_idx < num_choices) {
       MakeChoice(currentMillis);
     } else {
       current_state = PICKING;
       choice_idx = 0;
     }
-    
     break;
+  case GAME_OVER:
+    if (currentMillis - previousMillisColor >= 500) {
+      previousMillisColor = currentMillis;
+
+      if (blink == 0) {
+        tft.setTextColor(ST77XX_BLACK);
+        tft.setCursor(15, 100);
+        tft.print("Press any button\n\n      to start!");
+        tft.setTextColor(ST77XX_WHITE);
+        blink = 1;
+      } else {
+        tft.setCursor(15, 100);
+        tft.print("Press any button\n\n      to start!");
+        blink = 0;
+      }
+    }
+    break;
+  case RESTARTING:
+    choice_idx = 0;
+    num_choices = 0;
+    current_melody = melody;
+    current_melody_length = sizeof(melody) / sizeof(int);
+    tft.fillScreen(ST77XX_BLACK);
+    
+    current_state = PICKING;
   default:
     break;
   }
+
 }
 
 void MakeChoice(unsigned long currentMillis) {
@@ -188,21 +246,45 @@ void MakeChoice(unsigned long currentMillis) {
 
   Serial.println(choice_idx);
 
+  DrawColor(player_choice);
+  
   if (player_choice != all_choices[choice_idx++]) {
     current_state = GAME_OVER;
     Serial.println(player_choice);
     Serial.println(all_choices[choice_idx - 1]);
+
+    tone(buzzerPin, 0);
+    delay(500);
+    
+    current_melody = game_over_melody;
+    current_melody_length = sizeof(game_over_melody) / sizeof(int);
+    noteIndex = 0;
+
+    tft.fillScreen(ST77XX_BLACK);
+
+    tft.setTextSize(2);
+    tft.setCursor(10, 30);
+    tft.print("GAME OVER");
+
+    char buffer[100];
+    snprintf(buffer, sizeof(buffer), "Final score: %d", num_choices - 1);
+
+    tft.setTextSize(1);
+    tft.setCursor(20, 70);
+    tft.print(buffer);
+    
+    tft.setCursor(15, 100);
+    tft.print("Press any button\n\n      to start!");
+
     Serial.println("wrong!");
   }
 
-  DrawColor(player_choice);
   player_choice = -1;
 }
 
 void ShowColors(unsigned long currentMillis) {
   
-  if (currentMillis - previousMillisColor >= 1000)
-  {
+  if (currentMillis - previousMillisColor >= 1000) {
     previousMillisColor = currentMillis;
 
     unsigned int color = all_choices[choice_idx++];
@@ -211,12 +293,11 @@ void ShowColors(unsigned long currentMillis) {
 }
 
 void PickNewColor(unsigned long currentMillis) {
-  if (currentMillis - previousMillisColor >= 500)
-  {
-    tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, 20, ST77XX_BLACK);
+  if (currentMillis - previousMillisColor >= 500) {
+    tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, circle_radius, ST77XX_BLACK);
   }
-  if (currentMillis - previousMillisColor >= 1000)
-  {
+
+  if (currentMillis - previousMillisColor >= 1000) {
     previousMillisColor = currentMillis;
 
     // select a random color, 0 - red, 1 - green, 2 - blue, 3 - yellow
@@ -234,19 +315,18 @@ void PickNewColor(unsigned long currentMillis) {
 
 void DrawColor(unsigned int choice)
 {
-  switch (choice)
-  {
+  switch (choice) {
   case 0:
-    tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, 20, ST77XX_RED);
+    tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, circle_radius, ST77XX_RED);
     break;
   case 1:
-    tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, 20, ST77XX_GREEN);
+    tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, circle_radius, ST77XX_GREEN);
     break;
   case 2:
-    tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, 20, ST77XX_BLUE);
+    tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, circle_radius, ST77XX_BLUE);
     break;
   case 3:
-    tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, 20, ST77XX_YELLOW);
+    tft.drawCircle(LCD_WIDTH / 2, LCD_LENGTH / 2, circle_radius, ST77XX_YELLOW);
     break;
   default:
     break;
@@ -255,16 +335,13 @@ void DrawColor(unsigned int choice)
 
 void PlayMusic(unsigned long currentMillis)
 {
-  if (currentMillis - previousMillisMusic >= noteDuration / speed)
-  {
+  if (currentMillis - previousMillisMusic >= noteDuration / speed) {
     previousMillisMusic = currentMillis;
 
-    // cântăm următoarea notă
-    tone(buzzerPin, pitch * melody[noteIndex]);
+    tone(buzzerPin, pitch * current_melody[noteIndex]);
 
     noteIndex++;
-    if (noteIndex >= (sizeof(melody) / sizeof(melody[0])))
-    {
+    if (noteIndex >= current_melody_length) {
       noteIndex = 0;
     }
   }
