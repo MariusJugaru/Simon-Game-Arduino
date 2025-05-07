@@ -1,28 +1,31 @@
 #include <Arduino.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
+// #include <TFT_ST7735.h> 
 #include <SPI.h>
-#include <SD.h>
+// #include <SD.h>
 
+// buttons
 #define buttonRedPin A0
 #define buttonGreenPin A1
 #define buttonBluePin A2
 #define buttonYellowPin A3
 
-// #define redLedPin   2
-// #define greenLedPin 3
-// #define blueLedPin  4
-
+// buzzer
 #define buzzerPin 2
 
-// LCD
-#define TFT_SCL 13
-#define TFT_SDA_MOSI 11
+// joystick
+#define xPin A5
+#define yPin A4
+#define jsButtonPin 3
 
-#define TFT_RST 10
+int xVal;
+int yVal;
+
+// LCD
+#define TFT_CS  10
 #define TFT_DC  9
-#define TFT_CS  8
-#define TFT_BLK 7
+#define TFT_RST -1
 
 #define LCD_WIDTH 128
 #define LCD_LENGTH 160
@@ -30,8 +33,46 @@
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 
 // SD
-#define MISO 12
-#define SD_CS 6
+#include "SdFat.h"
+#if SPI_DRIVER_SELECT == 2  // Must be set in SdFat/SdFatConfig.h
+
+// SD_FAT_TYPE = 0 for SdFat/File as defined in SdFatConfig.h,
+// 1 for FAT16/FAT32, 2 for exFAT, 3 for FAT16/FAT32 and exFAT.
+#define SD_FAT_TYPE 1
+//
+// Chip select may be constant or RAM variable.
+const uint8_t SD_CS_PIN = 4;
+//
+// Pin numbers in templates must be constants.
+const uint8_t SOFT_MISO_PIN = 7;
+const uint8_t SOFT_MOSI_PIN = 6;
+const uint8_t SOFT_SCK_PIN = 5;
+
+// SdFat software SPI template
+SoftSpiDriver<SOFT_MISO_PIN, SOFT_MOSI_PIN, SOFT_SCK_PIN> softSpi;
+// Speed argument is ignored for software SPI.
+#if ENABLE_DEDICATED_SPI
+#define SD_CONFIG SdSpiConfig(SD_CS_PIN, DEDICATED_SPI, SD_SCK_MHZ(0), &softSpi)
+#else  // ENABLE_DEDICATED_SPI
+#define SD_CONFIG SdSpiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(0), &softSpi)
+#endif  // ENABLE_DEDICATED_SPI
+
+#if SD_FAT_TYPE == 0
+SdFat sd;
+File file;
+#elif SD_FAT_TYPE == 1
+SdFat32 sd;
+File32 file;
+#elif SD_FAT_TYPE == 2
+SdExFat sd;
+ExFile file;
+#elif SD_FAT_TYPE == 3
+SdFs sd;
+FsFile file;
+#else  // SD_FAT_TYPE
+#error Invalid SD_FAT_TYPE
+#endif  // SD_FAT_TYPE
+
 
 // melody
 int melody[] = {
@@ -69,13 +110,13 @@ int circle_radius = 30;
 int player_choice;
 int score;
 
-
 // states
 #define NOT_STARTED 0
 #define PICKING 1
 #define GUESSING 2
 #define GAME_OVER 3
 #define RESTARTING 4
+#define LEADERBOARD 5
 unsigned int current_state = NOT_STARTED;
 
 int blink = 0;
@@ -87,7 +128,7 @@ const unsigned long debounceDelay = 200;
 ISR(PCINT1_vect) {
   unsigned long currentTime = millis();
   if (currentTime - lastInterruptTime < debounceDelay) {
-    return; // ignorăm bouncing-ul
+    return; // ignore bounce
   }
   lastInterruptTime = currentTime;
   
@@ -100,10 +141,11 @@ ISR(PCINT1_vect) {
   }
 
   // restart game
-  if (current_state == GAME_OVER && (digitalRead(buttonRedPin) || digitalRead(buttonBluePin) 
+  if ((current_state == GAME_OVER || current_state == LEADERBOARD) && (digitalRead(buttonRedPin) || digitalRead(buttonBluePin) 
   || digitalRead(buttonGreenPin) || digitalRead(buttonYellowPin) == HIGH)) {
     current_state = RESTARTING;
   }
+  
 
   // make a choice
   if (player_choice == -1 && current_state == GUESSING) {
@@ -120,7 +162,16 @@ ISR(PCINT1_vect) {
 void setup()
 {
   Serial.begin(9600);
-  randomSeed(analogRead(A0));
+  delay(1000);
+
+
+  xVal = analogRead(xPin);
+  randomSeed(xVal);
+
+  // init joystick
+  pinMode(xPin, INPUT);
+  pinMode(yPin, INPUT);
+  pinMode(jsButtonPin, INPUT_PULLUP);
 
   // init buttons
   pinMode(buttonRedPin, INPUT_PULLUP);
@@ -134,37 +185,68 @@ void setup()
   // init buzzer
   pinMode(buzzerPin, OUTPUT);
 
-  SPI.begin();
-
-  // set the cs pins
-  pinMode(TFT_CS, OUTPUT);
-  pinMode(SD_CS, OUTPUT);
-
-  // turn off the communication
-  digitalWrite(TFT_CS, HIGH);
-  digitalWrite(SD_CS, HIGH);
-  
   // init lcd
-  digitalWrite(TFT_CS, LOW);
   tft.initR(INITR_18BLACKTAB);
   tft.fillScreen(ST77XX_BLACK);
   tft.setTextColor(ST77XX_WHITE);
   tft.setTextSize(1);
-  digitalWrite(TFT_CS, HIGH);
+  tft.println("TEST");
+
+  delay(1000);
 
   // init SD card
-  digitalWrite(SD_CS, LOW);
-  if (!SD.begin(-1)) {
-    Serial.println("Error!");
-    return;
+  if (!sd.begin(SD_CONFIG)) {
+    sd.initErrorHalt();
   }
-  Serial.println("SD initialized");
-  digitalWrite(SD_CS, HIGH);
+  // Serial.println("SD initialized");
 
+  if (!file.open("SoftSPI.txt", O_RDWR | O_CREAT)) {
+    sd.errorHalt(F("open failed"));
+  }
+  
+  while (file.available()) {
+    tft.write(file.read());
+  }
+
+  file.close();
+
+  // Serial.println(F("Done."));
+
+  delay(10000);
+  
 }
 
 void loop()
 {
+  xVal = analogRead(xPin);
+  yVal = analogRead(yPin);
+
+  // Serial.println(xVal);
+  // Serial.println(yVal);
+
+  if ((current_state == NOT_STARTED || current_state == GAME_OVER) && digitalRead(jsButtonPin) == LOW){
+    current_melody = melody;
+    current_melody_length = sizeof(melody) / sizeof(int);
+
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setCursor(0, 0);
+
+    if (!file.open("SoftSPI.txt", O_RDWR | O_CREAT)) {
+      sd.errorHalt(F("open failed"));
+    }
+    
+    while (file.available()) {
+      tft.write(file.read());
+    }
+  
+    file.close();
+
+    current_state = LEADERBOARD;
+    
+  }
+
+  // delay(1000);
+
   unsigned long currentMillis = millis();
 
   PlayMusic(currentMillis);
@@ -346,3 +428,7 @@ void PlayMusic(unsigned long currentMillis)
     }
   }
 }
+
+#else  // SPI_DRIVER_SELECT
+#error SPI_DRIVER_SELECT must be two in SdFat/SdFatConfig.h
+#endif  // SPI_DRIVER_SELECT
