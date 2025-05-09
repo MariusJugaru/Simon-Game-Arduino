@@ -110,13 +110,42 @@ int circle_radius = 30;
 int player_choice;
 int score;
 
+// keyboard & leaderboard
+
+const char *alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const int alphabetLen = strlen(alphabet);
+const int charsPerLine = 6;
+const int numLines = strlen(alphabet) / charsPerLine;
+
+int selectIdxX = 0;
+int selectIdxY = 0;
+int oldIdxX;
+int oldIdxY;
+int maxIdx = strlen(alphabet) + 2;
+
+int selectChange = 0;
+unsigned long lastJoystickMoveMillis = 0;
+unsigned long lastJoystickSelectMillis = 0;
+const int joystickDelay = 250;
+int readySelect = 0;
+
+char name[11] = "";
+
+struct node {
+  char player_data[20];
+
+  struct node *next;
+};
+
+
 // states
-#define NOT_STARTED 0
-#define PICKING 1
-#define GUESSING 2
-#define GAME_OVER 3
-#define RESTARTING 4
-#define LEADERBOARD 5
+#define NOT_STARTED   0
+#define PICKING       1
+#define GUESSING      2
+#define GAME_OVER     3
+#define RESTARTING    4
+#define KEYBOARD      5
+#define LEADERBOARD   6
 unsigned int current_state = NOT_STARTED;
 
 int blink = 0;
@@ -146,7 +175,6 @@ ISR(PCINT1_vect) {
     current_state = RESTARTING;
   }
   
-
   // make a choice
   if (player_choice == -1 && current_state == GUESSING) {
     if (digitalRead(buttonRedPin) == HIGH) player_choice = 0;
@@ -190,9 +218,12 @@ void setup()
   tft.fillScreen(ST77XX_BLACK);
   tft.setTextColor(ST77XX_WHITE);
   tft.setTextSize(1);
-  tft.println("TEST");
 
-  delay(1000);
+  if (strcmp("1-Bna", "2-Ana") < 0) {
+    Serial.println("smaller");
+  } else {
+    Serial.println("bigger");
+  }
 
   // init SD card
   if (!sd.begin(SD_CONFIG)) {
@@ -200,41 +231,57 @@ void setup()
   }
   // Serial.println("SD initialized");
 
-  if (!file.open("SoftSPI.txt", O_RDWR | O_CREAT)) {
+  if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT)) {
     sd.errorHalt(F("open failed"));
   }
   
+  node *head = (node *)malloc(sizeof(node));
+  if (head == NULL) {
+    return;
+  }
+
+  
+
+  char line[20];
+  memset(line, 0, sizeof(line));
+
   while (file.available()) {
-    tft.write(file.read());
+    char c = file.read();
+    if (c == '\n') {
+      tft.println(line);
+
+      memset(line, 0, sizeof(line));
+    } else if (c != '\r') {
+      line[strlen(line)] = c;
+    }    
   }
 
   file.close();
 
   // Serial.println(F("Done."));
 
-  delay(10000);
   
 }
 
 void loop()
 {
+  unsigned long currentMillis = millis();
+
+  PlayMusic(currentMillis);
+
   xVal = analogRead(xPin);
   yVal = analogRead(yPin);
 
   // Serial.println(xVal);
   // Serial.println(yVal);
 
-  if ((current_state == NOT_STARTED || current_state == GAME_OVER) && digitalRead(jsButtonPin) == LOW){
-    current_melody = melody;
-    current_melody_length = sizeof(melody) / sizeof(int);
-
-    tft.fillScreen(ST77XX_BLACK);
-    tft.setCursor(0, 0);
-
-    if (!file.open("SoftSPI.txt", O_RDWR | O_CREAT)) {
+  if (current_state == NOT_STARTED && digitalRead(jsButtonPin) == LOW){
+    if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT)) {
       sd.errorHalt(F("open failed"));
     }
     
+    tft.fillScreen(ST7735_BLACK);
+    tft.setCursor(0, 0);
     while (file.available()) {
       tft.write(file.read());
     }
@@ -242,15 +289,32 @@ void loop()
     file.close();
 
     current_state = LEADERBOARD;
-    
   }
 
-  // delay(1000);
+  if (current_state == GAME_OVER && digitalRead(jsButtonPin) == LOW) {
+    current_melody = melody;
+    current_melody_length = sizeof(melody) / sizeof(int);
 
-  unsigned long currentMillis = millis();
+    drawKeyboard();
 
-  PlayMusic(currentMillis);
+    unsigned long lastJoystickMillis = 0;
+    if (currentMillis - lastJoystickMillis > joystickDelay) {
+      lastJoystickMillis = currentMillis;
 
+      if (xVal > 700) {
+        tft.drawRect(11, LCD_LENGTH / 2 + (selectIdxX - 1) * 22 - 3, 14, 14, ST7735_BLACK);
+        selectIdxX++;
+        tft.drawRect(11 + selectIdxX * 15, LCD_LENGTH / 2 + (selectIdxX - 1) * 22 - 3, 14, 14, ST7735_BLACK);
+      }
+      
+    }
+
+    current_state = KEYBOARD;
+  }
+
+  
+
+  
   switch (current_state) {
   case NOT_STARTED:
     if (currentMillis - previousMillisColor >= 500) {
@@ -316,9 +380,141 @@ void loop()
     tft.fillScreen(ST77XX_BLACK);
     
     current_state = PICKING;
+  case KEYBOARD:
+    if (digitalRead(jsButtonPin) == HIGH && !readySelect) {
+      readySelect = 1;
+    }
+
+    if (currentMillis - lastJoystickSelectMillis > joystickDelay) {
+      if (digitalRead(jsButtonPin) == LOW && readySelect) {
+        lastJoystickSelectMillis = currentMillis;
+        readySelect = 0;
+
+        if (selectIdxY * charsPerLine + selectIdxX >= 0 && selectIdxY * charsPerLine + selectIdxX < alphabetLen && (int)strlen(name) < 10) {
+          strncat(name, &alphabet[selectIdxY * charsPerLine + selectIdxX], 1);
+          
+          tft.fillRect(LCD_WIDTH / 4, 20, 100, 30, ST7735_BLACK);
+          tft.setCursor(LCD_WIDTH / 4, 20);
+          tft.print(name);
+        } else if (selectIdxY * charsPerLine + selectIdxX == alphabetLen && (int)strlen(name) > 0) {
+          name[strlen(name) - 1] = '\0';
+
+          tft.fillRect(LCD_WIDTH / 4, 20, 100, 30, ST7735_BLACK);
+          tft.setCursor(LCD_WIDTH / 4, 20);
+          tft.print(name);
+        } else if (selectIdxY * charsPerLine + selectIdxX == alphabetLen + 1) {
+          current_state = LEADERBOARD;
+
+          if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT | O_AT_END)) {
+            sd.errorHalt(F("open failed"));
+          }
+          file.println(String(num_choices - 1) + "-" + name);
+          
+          file.close();
+
+          memset(name, 0, sizeof(name));
+          selectIdxX = 0;
+          selectIdxY = 0;
+          tft.fillScreen(ST7735_BLACK);
+
+
+        }
+
+      }
+    }
+    
+    if (currentMillis - lastJoystickMoveMillis > joystickDelay) {
+      oldIdxX = selectIdxX;
+      oldIdxY = selectIdxY;
+      
+      if (xVal > 800) {
+        lastJoystickMoveMillis = currentMillis;
+        
+        selectIdxX++;
+        selectChange = 1;
+      } else if (xVal < 150) {
+        lastJoystickMoveMillis = currentMillis;
+        
+        selectIdxX--;
+        selectChange = 1;
+      } else if (yVal > 800) {
+        lastJoystickMoveMillis = currentMillis;
+        
+        selectIdxY++;
+        selectChange = 1;
+      } else if (yVal < 150) {
+        lastJoystickMoveMillis = currentMillis;
+        
+        selectIdxY--;
+        selectChange = 1;
+      }
+
+      if (selectChange) {
+        if (selectIdxX < 0) {
+          selectIdxX = charsPerLine - 1;
+        }else if (selectIdxX >= charsPerLine) {
+          selectIdxX = 0;
+        }
+        
+        if (selectIdxY < 0) {
+          selectIdxY = numLines;
+        } else if (selectIdxY > numLines) {
+          selectIdxY = 0;
+        }
+
+        // remove old square select
+        if (oldIdxY * charsPerLine + oldIdxX < alphabetLen) {
+          tft.drawRect(11 + oldIdxX * 18, LCD_LENGTH / 2 + (oldIdxY - 1) * 22 - 3, 14, 14, ST7735_BLACK);
+        } else if (oldIdxY * charsPerLine + oldIdxX == alphabetLen) {
+          tft.drawRect(14 + oldIdxX * 18, LCD_LENGTH / 2 + (oldIdxY - 1) * 22 - 3, 30, 14, ST7735_BLACK);
+        } else if (oldIdxY * charsPerLine + oldIdxX == alphabetLen + 1) {
+          tft.drawRect(29 + oldIdxX * 18, LCD_LENGTH / 2 + (oldIdxY - 1) * 22 - 3, 30, 14, ST7735_BLACK);
+        }
+
+        while (selectIdxY * charsPerLine + selectIdxX >= maxIdx) {
+          selectIdxX--;
+        }
+        
+        // draw new square select
+        if (selectIdxY * charsPerLine + selectIdxX < alphabetLen) {
+          tft.drawRect(11 + selectIdxX * 18, LCD_LENGTH / 2 + (selectIdxY - 1) * 22 - 3, 14, 14, ST7735_WHITE);
+        } else if (selectIdxY * charsPerLine + selectIdxX == alphabetLen) {
+          tft.drawRect(14 + selectIdxX * 18, LCD_LENGTH / 2 + (selectIdxY - 1) * 22 - 3, 30, 14, ST7735_WHITE);
+        } else if (selectIdxY * charsPerLine + selectIdxX == alphabetLen + 1) {
+          tft.drawRect(29 + selectIdxX * 18, LCD_LENGTH / 2 + (selectIdxY - 1) * 22 - 3, 30, 14, ST7735_WHITE);
+        }
+
+        selectChange = 0;
+      }
+      
+      
+      
+    }
+
+    break;
   default:
     break;
   }
+
+}
+
+void drawKeyboard() {
+  selectIdxX = 0;
+
+  tft.fillScreen(ST7735_BLACK);
+
+  for (int i = 0; i < numLines + 1; i++) {
+    tft.setCursor(15, LCD_LENGTH / 2 + (i - 1) * 22);
+
+    for (int j = 0; (j < charsPerLine) && (charsPerLine * i + j < strlen(alphabet)); j++) {
+      tft.print(alphabet[charsPerLine * i + j]);
+      tft.print("  ");
+    }
+  }
+
+  tft.print(" DEL  OKAY");
+
+  tft.drawRect(11, LCD_LENGTH / 2 + (selectIdxX - 1) * 22 - 3, 14, 14, ST7735_WHITE);
 
 }
 
