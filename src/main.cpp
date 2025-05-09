@@ -103,7 +103,7 @@ unsigned int speed = 1;
 unsigned long previousMillisColor = 0;
 unsigned int choice_idx = 0;
 unsigned int num_choices = 0;
-int all_choices[100];
+int all_choices[101];
 
 int circle_radius = 30;
 
@@ -130,12 +130,7 @@ const int joystickDelay = 250;
 int readySelect = 0;
 
 char name[11] = "";
-
-struct node {
-  char player_data[20];
-
-  struct node *next;
-};
+node_t *list_head = NULL;
 
 
 // states
@@ -190,7 +185,8 @@ ISR(PCINT1_vect) {
 void setup()
 {
   Serial.begin(9600);
-  delay(1000);
+  
+  while (!Serial);
 
 
   xVal = analogRead(xPin);
@@ -219,47 +215,56 @@ void setup()
   tft.setTextColor(ST77XX_WHITE);
   tft.setTextSize(1);
 
-  if (strcmp("1-Bna", "2-Ana") < 0) {
-    Serial.println("smaller");
-  } else {
-    Serial.println("bigger");
+  for (int i = 0; i < 10; i++) {
+    addNode(&list_head, "000  -  AAAAAAAAAA");
   }
+  addNode(&list_head, "001  -  AAAAAAAAAA");
+  addNode(&list_head, "010  -  AAAAAAAAAA");
+  addNode(&list_head, "005  -  AAAAAAAAAA");
 
   // init SD card
-  if (!sd.begin(SD_CONFIG)) {
-    sd.initErrorHalt();
-  }
-  // Serial.println("SD initialized");
+  // if (!sd.begin(SD_CONFIG)) {
+  //   sd.initErrorHalt();
+  // }
 
-  if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT)) {
-    sd.errorHalt(F("open failed"));
-  }
-  
-  node *head = (node *)malloc(sizeof(node));
-  if (head == NULL) {
-    return;
-  }
+  // if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT | O_TRUNC)) {
+  //   sd.errorHalt(F("open failed"));
+  // }
 
-  
+  // for (int i = 0; i < 10; i++) {
+  //   file.println(F("000  -  AAAAAAAAAA"));
+  // }
+  // file.println(F("001  -  AAAAAAAAAA"));
+  // file.println(F("010  -  AAAAAAAAAA"));
+  // file.println(F("005  -  AAAAAAAAAA"));
+  // file.close();
 
-  char line[20];
-  memset(line, 0, sizeof(line));
+  // if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT)){
+  //   sd.errorHalt(F("open failed"));
+  // }
 
-  while (file.available()) {
-    char c = file.read();
-    if (c == '\n') {
-      tft.println(line);
+  // char line[20];
+  // memset(line, 0, sizeof(line));
 
-      memset(line, 0, sizeof(line));
-    } else if (c != '\r') {
-      line[strlen(line)] = c;
-    }    
-  }
+  // while (file.available()) {
+  //   char c = file.read();
+  //   if (c == '\n') {
+  //     addNode(&list_head, line);
 
-  file.close();
+  //     memset(line, 0, sizeof(line));
+  //   }
+  //   else if (c != '\r') {
+  //     line[strlen(line)] = c;
+  //   }
+  // }
 
-  // Serial.println(F("Done."));
+  // file.close();
 
+  // printScore();
+}
+
+void loadData()
+{
   
 }
 
@@ -276,17 +281,13 @@ void loop()
   // Serial.println(yVal);
 
   if (current_state == NOT_STARTED && digitalRead(jsButtonPin) == LOW){
-    if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT)) {
-      sd.errorHalt(F("open failed"));
-    }
+    // if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT)) {
+    //   sd.errorHalt(F("open failed"));
+    // }
     
+    // tft.fillScreen(ST7735_BLACK);
     tft.fillScreen(ST7735_BLACK);
-    tft.setCursor(0, 0);
-    while (file.available()) {
-      tft.write(file.read());
-    }
-  
-    file.close();
+    printScore();
 
     current_state = LEADERBOARD;
   }
@@ -297,23 +298,8 @@ void loop()
 
     drawKeyboard();
 
-    unsigned long lastJoystickMillis = 0;
-    if (currentMillis - lastJoystickMillis > joystickDelay) {
-      lastJoystickMillis = currentMillis;
-
-      if (xVal > 700) {
-        tft.drawRect(11, LCD_LENGTH / 2 + (selectIdxX - 1) * 22 - 3, 14, 14, ST7735_BLACK);
-        selectIdxX++;
-        tft.drawRect(11 + selectIdxX * 15, LCD_LENGTH / 2 + (selectIdxX - 1) * 22 - 3, 14, 14, ST7735_BLACK);
-      }
-      
-    }
-
     current_state = KEYBOARD;
   }
-
-  
-
   
   switch (current_state) {
   case NOT_STARTED:
@@ -380,6 +366,7 @@ void loop()
     tft.fillScreen(ST77XX_BLACK);
     
     current_state = PICKING;
+    break;
   case KEYBOARD:
     if (digitalRead(jsButtonPin) == HIGH && !readySelect) {
       readySelect = 1;
@@ -404,22 +391,30 @@ void loop()
           tft.print(name);
         } else if (selectIdxY * charsPerLine + selectIdxX == alphabetLen + 1) {
           current_state = LEADERBOARD;
+          name[strlen(name)] = '\0';
 
-          if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT | O_AT_END)) {
-            sd.errorHalt(F("open failed"));
-          }
-          file.println(String(num_choices - 1) + "-" + name);
+          char buffer[20];
           
-          file.close();
+          snprintf(buffer, sizeof(buffer), "%03d  -  %s", num_choices - 1, name);
+          addNode(&list_head, buffer);
+
+          // if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT | O_APPEND)) {
+          //   sd.errorHalt(F("open failed here"));
+          // }
+          // file.println(buffer);
+          // file.close();
+          
+          // loadData();
+
+          // Serial.println(list_head->player_data);
+          // saveScore();
 
           memset(name, 0, sizeof(name));
           selectIdxX = 0;
           selectIdxY = 0;
           tft.fillScreen(ST7735_BLACK);
-
-
+          printScore();
         }
-
       }
     }
     
@@ -483,12 +478,8 @@ void loop()
         } else if (selectIdxY * charsPerLine + selectIdxX == alphabetLen + 1) {
           tft.drawRect(29 + selectIdxX * 18, LCD_LENGTH / 2 + (selectIdxY - 1) * 22 - 3, 30, 14, ST7735_WHITE);
         }
-
         selectChange = 0;
       }
-      
-      
-      
     }
 
     break;
@@ -496,6 +487,93 @@ void loop()
     break;
   }
 
+}
+
+void printScore()
+{
+  int i = 0;
+  tft.setCursor(0, 5);
+  node_t *p = list_head;
+  while (p != NULL && i < 10) {
+    tft.print(" ");
+    tft.println(p->player_data);
+    tft.println();
+    p = p->next;
+    i++;
+  }
+}
+
+#define MAX_NODES 10
+
+void addNode(node_t** list_head, char *player_data) {
+  node_t *new_node = createNode(player_data);
+  if (new_node == NULL) return;
+
+  Serial.println("NEW NODE");
+  Serial.println(new_node->player_data);
+
+  node_t *p = *list_head;
+  node_t *prev = NULL;
+  int count = 0;
+
+  while (p != NULL && strcmp(new_node->player_data, p->player_data) <= 0) {
+    prev = p;
+    p = p->next;
+    count++;
+  }
+
+  if (count >= MAX_NODES) {
+    free(new_node);
+    return;
+  }
+
+  if (prev == NULL) {
+    new_node->next = *list_head;
+    *list_head = new_node;
+  } else {
+    prev->next = new_node;
+    new_node->next = p;
+  }
+
+  // după inserare, verificăm dacă avem > 10 noduri → ștergem ultimul
+  p = *list_head;
+  prev = NULL;
+  count = 0;
+  while (p != NULL) {
+    count++;
+    if (count > MAX_NODES) {
+      // tăiem lista la 10
+      prev->next = NULL;
+      free(p);
+      Serial.println("NODE DELETED");
+      break;
+    }
+    prev = p;
+    p = p->next;
+  }
+}
+
+node_t* createNode(char *player_data) {
+  node_t *new_node = (node_t *)malloc(sizeof(node_t));
+  if (new_node == NULL) {
+    return NULL;
+  }
+
+  new_node->next = NULL;
+  strncpy(new_node->player_data, player_data, sizeof(new_node->player_data) - 1);
+  new_node->player_data[sizeof(new_node->player_data) - 1] = '\0';
+
+  return new_node;
+}
+
+void freeList(node_t **list_head) {
+  node_t *p;
+  
+  while(*list_head != NULL) {
+    p = *list_head;
+    *list_head = (*list_head)->next;
+    free(p);
+  }
 }
 
 void drawKeyboard() {
@@ -506,7 +584,7 @@ void drawKeyboard() {
   for (int i = 0; i < numLines + 1; i++) {
     tft.setCursor(15, LCD_LENGTH / 2 + (i - 1) * 22);
 
-    for (int j = 0; (j < charsPerLine) && (charsPerLine * i + j < strlen(alphabet)); j++) {
+    for (int j = 0; (j < charsPerLine) && (charsPerLine * i + j < (int)strlen(alphabet)); j++) {
       tft.print(alphabet[charsPerLine * i + j]);
       tft.print("  ");
     }
@@ -544,7 +622,7 @@ void MakeChoice(unsigned long currentMillis) {
     tft.setCursor(10, 30);
     tft.print("GAME OVER");
 
-    char buffer[100];
+    char buffer[20];
     snprintf(buffer, sizeof(buffer), "Final score: %d", num_choices - 1);
 
     tft.setTextSize(1);
