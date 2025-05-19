@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
-// #include <TFT_ST7735.h> 
+#include <EEPROM.h>
 #include <SPI.h>
 // #include <SD.h>
 
@@ -188,7 +188,6 @@ void setup()
   
   while (!Serial);
 
-
   xVal = analogRead(xPin);
   randomSeed(xVal);
 
@@ -215,17 +214,28 @@ void setup()
   tft.setTextColor(ST77XX_WHITE);
   tft.setTextSize(1);
 
-  for (int i = 0; i < 10; i++) {
-    addNode(&list_head, "000  -  AAAAAAAAAA");
-  }
-  addNode(&list_head, "001  -  AAAAAAAAAA");
-  addNode(&list_head, "010  -  AAAAAAAAAA");
-  addNode(&list_head, "005  -  AAAAAAAAAA");
+  // for (int i = 0; i < 10; i++) {
+  //   addNode(&list_head, "000  -  AAAAAAAAAA");
+  // }
+  // addNode(&list_head, "001  -  AAAAAAAAAA");
+  // addNode(&list_head, "010  -  AAAAAAAAAA");
+  // addNode(&list_head, "005  -  AAAAAAAAAA");
 
-  // init SD card
+  loadAllScoresFromEEPROM();
+  // initializeEEPROMWithDefaultScores();
+  // saveScoresToEEPROM(list_head);
+
+  // readAllScoresFromEEPROM();
+
+  // pinMode(SD_CS_PIN, OUTPUT);
+  // digitalWrite(SD_CS_PIN, HIGH);
+
+  // noInterrupts();
+  // // init SD card
   // if (!sd.begin(SD_CONFIG)) {
   //   sd.initErrorHalt();
   // }
+  // interrupts();
 
   // if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT | O_TRUNC)) {
   //   sd.errorHalt(F("open failed"));
@@ -263,9 +273,89 @@ void setup()
   // printScore();
 }
 
-void loadData()
-{
+const int numScores = 10;
+const int entrySize = 20;
+
+void initializeEEPROMWithDefaultScores() {
+  const char defaultEntry[20] = "000  -  AAAAAAAAAA";
+
+  for (int i = 0; i < numScores; i++) {
+    int address = i * entrySize;
+    for (int j = 0; j < entrySize; j++) {
+      EEPROM.write(address + j, defaultEntry[j]);
+    }
+  }
+}
+
+void saveScoresToEEPROM(node_t *head) {
+  node_t *current = head;
+  int index = 0;
+
+  while (current != NULL && index < numScores) {
+    int address = index * entrySize;
+
+    for (int i = 0; i < entrySize; i++) {
+      char c = (i < (int)strlen(current->player_data)) ? current->player_data[i] : ' ';
+      EEPROM.write(address + i, c);
+    }
+
+    current = current->next;
+    index++;
+  }
+}
+
+void readAllScoresFromEEPROM() {
+  char buffer[20];
+
+  Serial.println("Scoruri salvate in EEPROM:");
+  for (int i = 0; i < numScores; i++) {
+    int address = i * entrySize;
+    for (int j = 0; j < entrySize; j++) {
+      buffer[j] = EEPROM.read(address + j);
+    }
+    buffer[entrySize] = '\0';
+    Serial.println(buffer);
+  }
+}
+
+int getLowestIdxFromEEPROM() {
+  static char tmpbuffer[20];
+  static char lowestBuff[20];
+  char idx = 0;
+
+  for (int i = 0; i < entrySize; i++) {
+    lowestBuff[i] = EEPROM.read(i);
+  }
+  lowestBuff[entrySize - 1] = '\0';
   
+  for (int i = 1; i < numScores; i++) {
+    int address = i * entrySize;
+    for (int j = 0; j < entrySize; j++) {
+      tmpbuffer[j] = EEPROM.read(address + j);
+    }
+    tmpbuffer[entrySize - 1] = '\0';
+    
+    if (strcmp(tmpbuffer, lowestBuff) < 0) {
+      strcpy(lowestBuff, tmpbuffer);
+      idx = i;
+    }
+  }
+
+  return idx;
+}
+
+void loadAllScoresFromEEPROM() {
+  char buffer[20];
+
+  Serial.println("Scoruri salvate in EEPROM:");
+  for (int i = 0; i < numScores; i++) {
+    int address = i * entrySize;
+    for (int j = 0; j < entrySize; j++) {
+      buffer[j] = EEPROM.read(address + j);
+    }
+    buffer[entrySize] = '\0';
+    addNode(&list_head, buffer);
+  }
 }
 
 void loop()
@@ -285,7 +375,6 @@ void loop()
     //   sd.errorHalt(F("open failed"));
     // }
     
-    // tft.fillScreen(ST7735_BLACK);
     tft.fillScreen(ST7735_BLACK);
     printScore();
 
@@ -396,7 +485,34 @@ void loop()
           char buffer[20];
           
           snprintf(buffer, sizeof(buffer), "%03d  -  %s", num_choices - 1, name);
+          Serial.println("AICI");
+          Serial.println(buffer);
+          int idx = getLowestIdxFromEEPROM();
+          Serial.println("AICI");
+          Serial.println(buffer);
+
           addNode(&list_head, buffer);
+          
+
+          char lowest_buffer[20];
+
+          int address = idx * entrySize;
+          for (int j = 0; j < entrySize; j++) {
+            lowest_buffer[j] = EEPROM.read(address + j);
+          }
+          lowest_buffer[entrySize - 1] = '\0';
+
+          if (strcmp(buffer, lowest_buffer) > 0) {
+            int address = idx * entrySize;
+
+            for (int i = 0; i < entrySize; i++) {
+              char c = (i < (int)strlen(buffer)) ? buffer[i] : ' ';
+              EEPROM.write(address + i, c);
+              // Serial.println(c);
+            }
+          }
+
+          // saveScoresToEEPROM(list_head);
 
           // if (!file.open("test_leaderboard.txt", O_RDWR | O_CREAT | O_APPEND)) {
           //   sd.errorHalt(F("open failed here"));
