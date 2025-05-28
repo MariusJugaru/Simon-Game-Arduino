@@ -3,7 +3,6 @@
 #include <Adafruit_ST7735.h>
 #include <EEPROM.h>
 #include <SPI.h>
-// #include <SD.h>
 
 // buttons
 #define buttonRedPin A0
@@ -437,12 +436,12 @@ void loop()
       if (blink == 0) {
         tft.setTextColor(ST77XX_BLACK);
         tft.setCursor(15, 100);
-        tft.print("Press any button\n\n      to start!");
+        tft.print("Press any button\n\n      to restart!");
         tft.setTextColor(ST77XX_WHITE);
         blink = 1;
       } else {
         tft.setCursor(15, 100);
-        tft.print("Press any button\n\n      to start!");
+        tft.print("Press any button\n\n      to restart!");
         blink = 0;
       }
     }
@@ -454,7 +453,7 @@ void loop()
     current_melody_length = sizeof(melody) / sizeof(int);
     tft.fillScreen(ST77XX_BLACK);
     
-    current_state = PICKING;
+    current_state = NOT_STARTED;
     break;
   case KEYBOARD:
     if (digitalRead(jsButtonPin) == HIGH && !readySelect) {
@@ -746,7 +745,7 @@ void MakeChoice(unsigned long currentMillis) {
     tft.print(buffer);
     
     tft.setCursor(15, 100);
-    tft.print("Press any button\n\n      to start!");
+    tft.print("Press any button\n\n      to restart!");
 
     Serial.println("wrong!");
   }
